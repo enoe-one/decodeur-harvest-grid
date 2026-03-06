@@ -29,7 +29,7 @@
 
   <div class="drop-zone" id="dropZone">
     <input type="file" id="fileInput">
-    <div class="drop-zone__icon" id="dropIcon">↓</div>
+    <div class="drop-zone__icon">↓</div>
     <div class="drop-zone__title" id="dropTitle">Déposez votre fichier .save ici</div>
     <div class="drop-zone__sub">ou cliquez pour parcourir</div>
     <div class="drop-zone__file" id="fileName" style="display:none"></div>
@@ -47,7 +47,7 @@
       <span class="output__label">Résultat</span>
       <div class="output__actions">
         <button class="btn" onclick="copyResult()">Copier</button>
-        <button class="btn btn--primary" onclick="downloadResult()" id="btnDownload">Télécharger</button>
+        <button class="btn btn--primary" id="btnDownload" onclick="downloadResult()">Télécharger</button>
       </div>
     </div>
     <textarea id="outputArea" readonly></textarea>
@@ -75,19 +75,19 @@ function setMode(m) {
   document.getElementById('btnConvert').disabled = true;
 }
 
-document.getElementById('fileInput').addEventListener('change', function(e) {
-  const file = e.target.files[0];
-  if (file) loadFile(file);
+// File input
+document.getElementById('fileInput').addEventListener('change', function() {
+  if (this.files[0]) loadFile(this.files[0]);
 });
 
+// Drag & drop
 const dz = document.getElementById('dropZone');
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drop-zone--active'); });
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drop-zone--active'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('drop-zone--active'));
 dz.addEventListener('drop', e => {
   e.preventDefault();
   dz.classList.remove('drop-zone--active');
-  const file = e.dataTransfer.files[0];
-  if (file) loadFile(file);
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
 });
 
 function loadFile(file) {
@@ -103,42 +103,80 @@ function loadFile(file) {
   reader.readAsText(file);
 }
 
-async function loadPako() {
-  if (window.pako) return;
-  await new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
-    s.onload = res; s.onerror = rej;
-    document.head.appendChild(s);
-  });
+// --- zlib via native browser streams (no external lib) ---
+
+async function zlibInflate(base64) {
+  const binaryStr = atob(base64.trim());
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+  const ds = new DecompressionStream('deflate');
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+
+  const chunks = [];
+  const reader = ds.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+  return new TextDecoder().decode(out);
 }
+
+async function zlibDeflate(str) {
+  const bytes = new TextEncoder().encode(str);
+  const cs = new CompressionStream('deflate');
+  const writer = cs.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+
+  const chunks = [];
+  const reader = cs.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+  let binary = '';
+  for (let i = 0; i < out.length; i++) binary += String.fromCharCode(out[i]);
+  return btoa(binary);
+}
+
+// ---------------------------------------------------------
 
 async function convert() {
   if (!fileContent) return;
-  await loadPako();
+  const btn = document.getElementById('btnConvert');
+  btn.disabled = true;
+  btn.querySelector('span').textContent = '...';
   try {
     let result, outFile;
     if (mode === 'decode') {
-      const b64 = fileContent.trim();
-      const binaryStr = atob(b64);
-      const bytes = new Uint8Array(binaryStr.length);
-      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-      const json = pako.inflate(bytes, { to: 'string' });
+      const json = await zlibInflate(fileContent);
       result = JSON.stringify(JSON.parse(json), null, 2);
-      outFile = fileName.replace(/\.save$/, '') + '.json';
+      outFile = fileName.replace(/\.save$/i, '') + '.json';
     } else {
-      JSON.parse(fileContent);
-      const compressed = pako.deflate(fileContent);
-      let binary = '';
-      for (let i = 0; i < compressed.length; i++) binary += String.fromCharCode(compressed[i]);
-      result = btoa(binary);
-      outFile = fileName.replace(/\.(json|txt)$/, '') + '.save';
+      JSON.parse(fileContent); // validate
+      result = await zlibDeflate(fileContent.trim());
+      outFile = fileName.replace(/\.(json|txt)$/i, '') + '.save';
     }
     showOutput(result, outFile);
     toast('Conversion réussie', 'ok');
   } catch(e) {
     toast('Erreur : ' + e.message, 'err');
   }
+  btn.disabled = false;
+  document.getElementById('btnLabel').textContent = mode === 'decode' ? 'Décoder' : 'Encoder';
 }
 
 let outputData = '', outputFile = '';
@@ -151,8 +189,7 @@ function showOutput(data, filename) {
 }
 
 function copyResult() {
-  navigator.clipboard.writeText(outputData);
-  toast('Copié', 'ok');
+  navigator.clipboard.writeText(outputData).then(() => toast('Copié', 'ok'));
 }
 
 function downloadResult() {
