@@ -222,20 +222,27 @@ async function loadPako() {
 
 async function loadSave() {
   await loadPako();
-  const input = Object.assign(document.createElement('input'), { type: 'file' });
-  input.onchange = e => {
-    const file = e.target.files[0];
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', function() {
+    const file = this.files[0];
+    document.body.removeChild(input);
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = function(ev) {
       try {
-        const bytes = Uint8Array.from(atob(ev.target.result.trim()), c => c.charCodeAt(0));
+        const b64 = ev.target.result.trim();
+        const binaryStr = atob(b64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
         applySave(JSON.parse(pako.inflate(bytes, { to: 'string' })));
         toast('Sauvegarde chargée', 'ok');
-      } catch(e) { toast('Erreur : ' + e.message, 'err'); }
+      } catch(err) { toast('Erreur : ' + err.message, 'err'); }
     };
     reader.readAsText(file);
-  };
+  });
   input.click();
 }
 
@@ -266,12 +273,16 @@ async function generateSave() {
     if (c.unlocked) garden.unlocked.push({ x, y });
     if (c.plant)    garden.plants.push({ x, y, type: c.plant, currentStep: 0, ticks: 0, harvestable: false });
   }));
-  const encoded = btoa(String.fromCharCode(...pako.deflate(JSON.stringify(garden))));
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([encoded], { type: 'text/plain' })),
-    download: 'garden.save'
-  });
+  const compressed = pako.deflate(JSON.stringify(garden));
+  let binary = '';
+  for (let i = 0; i < compressed.length; i++) binary += String.fromCharCode(compressed[i]);
+  const encoded = btoa(binary);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([encoded], { type: 'text/plain' }));
+  a.download = 'garden.save';
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   toast('Sauvegarde téléchargée', 'ok');
 }
 
