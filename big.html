@@ -20,7 +20,6 @@
 
   <div class="layout">
 
-    <!-- Sidebar -->
     <aside class="sidebar">
 
       <div class="panel">
@@ -62,7 +61,6 @@
 
     </aside>
 
-    <!-- Canvas area -->
     <div class="main-area">
       <div class="zoom-bar">
         <span style="font-family:var(--font-mono);font-size:0.72rem;color:var(--muted)">zoom</span>
@@ -84,9 +82,9 @@
 <script>
 const PLANTS = ["Herba","Igniflos","Longifel","Quadcapsa","Skaltyus","Glacruxiem","Viridipiou","Doughnut"];
 const COLORS = {
-  Herba:'#4a7a38',Igniflos:'#9a3018',Longifel:'#7040a0',
-  Quadcapsa:'#1860a0',Skaltyus:'#a07818',Glacruxiem:'#308098',
-  Viridipiou:'#388050',Doughnut:'#a06020'
+  Herba:'#4a7a38', Igniflos:'#9a3018', Longifel:'#7040a0',
+  Quadcapsa:'#1860a0', Skaltyus:'#a07818', Glacruxiem:'#308098',
+  Viridipiou:'#388050', Doughnut:'#a06020'
 };
 const MAX_SIZE = 40;
 let gridSize = 8;
@@ -107,6 +105,52 @@ PLANTS.forEach(p => {
   };
   pg.appendChild(btn);
 });
+
+// --- zlib via native browser streams ---
+
+async function zlibInflate(base64) {
+  const binaryStr = atob(base64.trim());
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+  const ds = new DecompressionStream('deflate');
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const chunks = [];
+  const reader = ds.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+  return new TextDecoder().decode(out);
+}
+
+async function zlibDeflate(str) {
+  const bytes = new TextEncoder().encode(str);
+  const cs = new CompressionStream('deflate');
+  const writer = cs.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const chunks = [];
+  const reader = cs.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+  let binary = '';
+  for (let i = 0; i < out.length; i++) binary += String.fromCharCode(out[i]);
+  return btoa(binary);
+}
+
+// --------------------------------------
 
 function changeSize(delta) {
   const next = Math.max(1, Math.min(MAX_SIZE, gridSize + delta));
@@ -154,24 +198,21 @@ function draw() {
       const py = y * cellSize;
       const sz = cellSize - 1;
 
-      // Fill
       if (c.plant)         ctx.fillStyle = COLORS[c.plant] || '#3a6030';
       else if (c.unlocked) ctx.fillStyle = '#28260e';
       else                 ctx.fillStyle = '#1c1c18';
       ctx.fillRect(px, py, sz, sz);
 
-      // Border
-      ctx.strokeStyle = c.plant   ? 'rgba(255,255,255,0.22)'
+      ctx.strokeStyle = c.plant    ? 'rgba(255,255,255,0.22)'
                       : c.unlocked ? '#7a6a28'
                       :              '#383830';
       ctx.lineWidth = 1;
       ctx.strokeRect(px + 0.5, py + 0.5, sz - 1, sz - 1);
 
-      // Label
       if (cellSize >= 16) {
         if (c.plant) {
           ctx.fillStyle = 'rgba(255,255,255,0.88)';
-          ctx.font = `600 ${Math.round(cellSize * 0.36)}px 'IBM Plex Mono', monospace`;
+          ctx.font = `600 ${Math.round(cellSize * 0.36)}px monospace`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(c.plant.slice(0, 3), px + sz / 2, py + sz / 2);
@@ -190,8 +231,8 @@ function draw() {
 document.getElementById('gardenCanvas').addEventListener('click', function(e) {
   const wrap = document.getElementById('canvasWrap');
   const rect  = this.getBoundingClientRect();
-  const cx = Math.floor((e.clientX - rect.left  + wrap.scrollLeft) / cellSize);
-  const cy = Math.floor((e.clientY - rect.top   + wrap.scrollTop)  / cellSize);
+  const cx = Math.floor((e.clientX - rect.left + wrap.scrollLeft) / cellSize);
+  const cy = Math.floor((e.clientY - rect.top  + wrap.scrollTop)  / cellSize);
   if (cx < 0 || cy < 0 || cx >= gridSize || cy >= gridSize) return;
   const c = cells[cy][cx];
   if (!c.unlocked)   c.unlocked = true;
@@ -210,18 +251,7 @@ function updateStats() {
 
 function clearGrid() { initGrid(); toast('Grille effacée', 'ok'); }
 
-async function loadPako() {
-  if (window.pako) return;
-  await new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
-    s.onload = res; s.onerror = rej;
-    document.head.appendChild(s);
-  });
-}
-
-async function loadSave() {
-  await loadPako();
+function loadSave() {
   const input = document.createElement('input');
   input.type = 'file';
   input.style.display = 'none';
@@ -231,15 +261,14 @@ async function loadSave() {
     document.body.removeChild(input);
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function(ev) {
+    reader.onload = async function(ev) {
       try {
-        const b64 = ev.target.result.trim();
-        const binaryStr = atob(b64);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-        applySave(JSON.parse(pako.inflate(bytes, { to: 'string' })));
+        const json = await zlibInflate(ev.target.result);
+        applySave(JSON.parse(json));
         toast('Sauvegarde chargée', 'ok');
-      } catch(err) { toast('Erreur : ' + err.message, 'err'); }
+      } catch(err) {
+        toast('Erreur : ' + err.message, 'err');
+      }
     };
     reader.readAsText(file);
   });
@@ -257,13 +286,19 @@ function applySave(data) {
   cells = Array.from({ length: gridSize }, () =>
     Array.from({ length: gridSize }, () => ({ unlocked: false, plant: null }))
   );
-  (data.unlocked || []).forEach(u => { if (u.y < gridSize && u.x < gridSize) cells[u.y][u.x].unlocked = true; });
-  (data.plants   || []).forEach(p => { if (p.y < gridSize && p.x < gridSize) { cells[p.y][p.x].unlocked = true; cells[p.y][p.x].plant = p.type; } });
+  (data.unlocked || []).forEach(u => {
+    if (u.y < gridSize && u.x < gridSize) cells[u.y][u.x].unlocked = true;
+  });
+  (data.plants || []).forEach(p => {
+    if (p.y < gridSize && p.x < gridSize) {
+      cells[p.y][p.x].unlocked = true;
+      cells[p.y][p.x].plant = p.type;
+    }
+  });
   resizeCanvas(); draw(); updateStats();
 }
 
 async function generateSave() {
-  await loadPako();
   const garden = {
     money: parseInt(document.getElementById('money').value) || 0,
     unlocked: [], plants: [],
@@ -273,17 +308,18 @@ async function generateSave() {
     if (c.unlocked) garden.unlocked.push({ x, y });
     if (c.plant)    garden.plants.push({ x, y, type: c.plant, currentStep: 0, ticks: 0, harvestable: false });
   }));
-  const compressed = pako.deflate(JSON.stringify(garden));
-  let binary = '';
-  for (let i = 0; i < compressed.length; i++) binary += String.fromCharCode(compressed[i]);
-  const encoded = btoa(binary);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([encoded], { type: 'text/plain' }));
-  a.download = 'garden.save';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  toast('Sauvegarde téléchargée', 'ok');
+  try {
+    const encoded = await zlibDeflate(JSON.stringify(garden));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([encoded], { type: 'text/plain' }));
+    a.download = 'garden.save';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast('Sauvegarde téléchargée', 'ok');
+  } catch(err) {
+    toast('Erreur : ' + err.message, 'err');
+  }
 }
 
 function toast(msg, type) {
