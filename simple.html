@@ -47,15 +47,15 @@
 
   <div class="legend">
     <div class="legend__item">
-      <div class="legend__dot" style="background:#141410"></div>
+      <div class="legend__dot" style="background:#1c1c18;border-color:#383830"></div>
       Verrouillée
     </div>
     <div class="legend__item">
-      <div class="legend__dot" style="background:#1e1e14;border-color:rgba(184,164,110,0.3)"></div>
+      <div class="legend__dot" style="background:#28260e;border-color:#7a6a28"></div>
       Débloquée
     </div>
     <div class="legend__item">
-      <div class="legend__dot" style="background:#141e10;border-color:rgba(122,171,106,0.4)"></div>
+      <div class="legend__dot" style="background:#162414;border-color:#4a7840"></div>
       Plantée
     </div>
   </div>
@@ -75,10 +75,59 @@ const MAX_SIZE = 20;
 let gridSize = 8;
 let cells = [];
 
+// Populate plant select
 const sel = document.getElementById('plantSelect');
 PLANTS.forEach(p => {
-  sel.appendChild(Object.assign(document.createElement('option'), { value: p, textContent: p }));
+  const opt = document.createElement('option');
+  opt.value = opt.textContent = p;
+  sel.appendChild(opt);
 });
+
+// --- zlib via native browser streams ---
+
+async function zlibInflate(base64) {
+  const binaryStr = atob(base64.trim());
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+  const ds = new DecompressionStream('deflate');
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const chunks = [];
+  const reader = ds.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+  return new TextDecoder().decode(out);
+}
+
+async function zlibDeflate(str) {
+  const bytes = new TextEncoder().encode(str);
+  const cs = new CompressionStream('deflate');
+  const writer = cs.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const chunks = [];
+  const reader = cs.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+  let binary = '';
+  for (let i = 0; i < out.length; i++) binary += String.fromCharCode(out[i]);
+  return btoa(binary);
+}
+
+// --------------------------------------
 
 function changeSize(delta) {
   const next = Math.max(1, Math.min(MAX_SIZE, gridSize + delta));
@@ -107,8 +156,7 @@ function renderGrid() {
     for (let x = 0; x < gridSize; x++) {
       const c = cells[y][x];
       const div = document.createElement('div');
-      div.className = 'cell'
-        + (c.plant ? ' cell--planted' : (c.unlocked ? ' cell--unlocked' : ''));
+      div.className = 'cell' + (c.plant ? ' cell--planted' : c.unlocked ? ' cell--unlocked' : '');
       div.textContent = c.plant ? c.plant.slice(0, 3) : (c.unlocked ? '·' : '');
       div.title = `x:${x} y:${y}` + (c.plant ? ' — ' + c.plant : '');
       div.addEventListener('click', () => cellClick(x, y));
@@ -119,9 +167,9 @@ function renderGrid() {
 
 function cellClick(x, y) {
   const c = cells[y][x];
-  if (!c.unlocked)    c.unlocked = true;
-  else if (!c.plant)  c.plant = sel.value;
-  else                c.plant = null;
+  if (!c.unlocked)   c.unlocked = true;
+  else if (!c.plant) c.plant = sel.value;
+  else               c.plant = null;
   renderGrid();
 }
 
@@ -130,18 +178,7 @@ function clearGrid() {
   toast('Grille effacée', 'ok');
 }
 
-async function loadPako() {
-  if (window.pako) return;
-  await new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
-    s.onload = res; s.onerror = rej;
-    document.head.appendChild(s);
-  });
-}
-
-async function loadSave() {
-  await loadPako();
+function loadSave() {
   const input = document.createElement('input');
   input.type = 'file';
   input.style.display = 'none';
@@ -151,16 +188,14 @@ async function loadSave() {
     document.body.removeChild(input);
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function(ev) {
+    reader.onload = async function(ev) {
       try {
-        const b64 = ev.target.result.trim();
-        const binaryStr = atob(b64);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-        const data = JSON.parse(pako.inflate(bytes, { to: 'string' }));
-        applySave(data);
+        const json = await zlibInflate(ev.target.result);
+        applySave(JSON.parse(json));
         toast('Sauvegarde chargée', 'ok');
-      } catch(err) { toast('Erreur : ' + err.message, 'err'); }
+      } catch(err) {
+        toast('Erreur : ' + err.message, 'err');
+      }
     };
     reader.readAsText(file);
   });
@@ -178,35 +213,43 @@ function applySave(data) {
   cells = Array.from({ length: gridSize }, () =>
     Array.from({ length: gridSize }, () => ({ unlocked: false, plant: null }))
   );
-  (data.unlocked || []).forEach(u => { if (u.y < gridSize && u.x < gridSize) cells[u.y][u.x].unlocked = true; });
-  (data.plants   || []).forEach(p => { if (p.y < gridSize && p.x < gridSize) { cells[p.y][p.x].unlocked = true; cells[p.y][p.x].plant = p.type; } });
+  (data.unlocked || []).forEach(u => {
+    if (u.y < gridSize && u.x < gridSize) cells[u.y][u.x].unlocked = true;
+  });
+  (data.plants || []).forEach(p => {
+    if (p.y < gridSize && p.x < gridSize) {
+      cells[p.y][p.x].unlocked = true;
+      cells[p.y][p.x].plant = p.type;
+    }
+  });
   renderGrid();
 }
 
 async function generateSave() {
-  await loadPako();
   const garden = {
     money: parseInt(document.getElementById('money').value) || 0,
     unlocked: [], plants: [],
     unlockedPlants: PLANTS.length
   };
-  for (let y = 0; y < gridSize; y++)
+  for (let y = 0; y < gridSize; y++) {
     for (let x = 0; x < gridSize; x++) {
       const c = cells[y][x];
       if (c.unlocked) garden.unlocked.push({ x, y });
       if (c.plant)    garden.plants.push({ x, y, type: c.plant, currentStep: 0, ticks: 0, harvestable: false });
     }
-  const compressed = pako.deflate(JSON.stringify(garden));
-  let binary = '';
-  for (let i = 0; i < compressed.length; i++) binary += String.fromCharCode(compressed[i]);
-  const encoded = btoa(binary);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([encoded], { type: 'text/plain' }));
-  a.download = 'garden.save';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  toast('Sauvegarde téléchargée', 'ok');
+  }
+  try {
+    const encoded = await zlibDeflate(JSON.stringify(garden));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([encoded], { type: 'text/plain' }));
+    a.download = 'garden.save';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast('Sauvegarde téléchargée', 'ok');
+  } catch(err) {
+    toast('Erreur : ' + err.message, 'err');
+  }
 }
 
 function toast(msg, type) {
