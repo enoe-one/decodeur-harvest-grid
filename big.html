@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Grand Décodeur — Harvest Grid</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
@@ -155,29 +155,29 @@ function draw() {
       const sz = cellSize - 1;
 
       // Fill
-      if (c.plant)        ctx.fillStyle = COLORS[c.plant] || '#3a6030';
-      else if (c.unlocked) ctx.fillStyle = '#1e1e14';
-      else                 ctx.fillStyle = '#141410';
+      if (c.plant)         ctx.fillStyle = COLORS[c.plant] || '#3a6030';
+      else if (c.unlocked) ctx.fillStyle = '#28260e';
+      else                 ctx.fillStyle = '#1c1c18';
       ctx.fillRect(px, py, sz, sz);
 
       // Border
-      ctx.strokeStyle = c.plant ? 'rgba(255,255,255,0.15)'
-                      : c.unlocked ? 'rgba(184,164,110,0.2)'
-                      : 'rgba(255,255,255,0.05)';
-      ctx.lineWidth = 0.5;
+      ctx.strokeStyle = c.plant   ? 'rgba(255,255,255,0.22)'
+                      : c.unlocked ? '#7a6a28'
+                      :              '#383830';
+      ctx.lineWidth = 1;
       ctx.strokeRect(px + 0.5, py + 0.5, sz - 1, sz - 1);
 
       // Label
       if (cellSize >= 16) {
         if (c.plant) {
-          ctx.fillStyle = 'rgba(255,255,255,0.75)';
-          ctx.font = `500 ${Math.round(cellSize * 0.36)}px 'IBM Plex Mono', monospace`;
+          ctx.fillStyle = 'rgba(255,255,255,0.88)';
+          ctx.font = `600 ${Math.round(cellSize * 0.36)}px 'IBM Plex Mono', monospace`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(c.plant.slice(0, 3), px + sz / 2, py + sz / 2);
         } else if (c.unlocked) {
-          ctx.fillStyle = 'rgba(184,164,110,0.3)';
-          ctx.font = `${Math.round(cellSize * 0.4)}px serif`;
+          ctx.fillStyle = '#a08840';
+          ctx.font = `${Math.round(cellSize * 0.45)}px monospace`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('·', px + sz / 2, py + sz / 2);
