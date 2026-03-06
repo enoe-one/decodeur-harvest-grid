@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grand Décodeur — Harvest Grid</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <a class="nav-back" href="index.html">Accueil</a>
+
+  <div class="header">
+    <div class="header__label">outil 03</div>
+    <h1 class="header__title">Grand <span>Décodeur</span></h1>
+    <p class="header__desc">Éditeur canvas scrollable — jusqu'à 40×40 cases.</p>
+  </div>
+
+  <div class="layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+
+      <div class="panel">
+        <div class="panel__title">Paramètres</div>
+        <div class="field">
+          <label class="field__label">Argent</label>
+          <input type="number" id="money" value="100" min="0">
+        </div>
+        <div class="field" style="margin-top:10px">
+          <label class="field__label">Taille</label>
+          <div class="stepper">
+            <button class="stepper__btn" onclick="changeSize(-1)">−</button>
+            <span class="stepper__val" id="sizeVal">8</span>
+            <button class="stepper__btn" onclick="changeSize(1)">+</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel__title">Plante active</div>
+        <div class="plant-grid" id="plantGrid"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel__title">Statistiques</div>
+        <table class="stats-table">
+          <tr><td>Débloquées</td><td id="statUnlocked">0</td></tr>
+          <tr><td>Plantées</td><td id="statPlants">0</td></tr>
+          <tr><td>Grille</td><td id="statSize">8×8</td></tr>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel__title">Actions</div>
+        <button class="btn btn--full" onclick="loadSave()" style="margin-bottom:6px">Charger .save</button>
+        <button class="btn btn--primary btn--full" onclick="generateSave()" style="margin-bottom:6px">Générer .save</button>
+        <button class="btn btn--red btn--full" onclick="clearGrid()">Effacer la grille</button>
+      </div>
+
+    </aside>
+
+    <!-- Canvas area -->
+    <div class="main-area">
+      <div class="zoom-bar">
+        <span style="font-family:var(--font-mono);font-size:0.72rem;color:var(--muted)">zoom</span>
+        <button class="btn" style="padding:4px 12px" onclick="zoom(-1)">−</button>
+        <span class="zoom-label" id="zoomLabel">20px</span>
+        <button class="btn" style="padding:4px 12px" onclick="zoom(1)">+</button>
+      </div>
+      <div class="canvas-wrap" id="canvasWrap">
+        <canvas id="gardenCanvas"></canvas>
+      </div>
+      <p class="hint">1er clic → débloque &nbsp;·&nbsp; 2e clic → plante &nbsp;·&nbsp; 3e clic → retire</p>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const PLANTS = ["Herba","Igniflos","Longifel","Quadcapsa","Skaltyus","Glacruxiem","Viridipiou","Doughnut"];
+const COLORS = {
+  Herba:'#4a7a38',Igniflos:'#9a3018',Longifel:'#7040a0',
+  Quadcapsa:'#1860a0',Skaltyus:'#a07818',Glacruxiem:'#308098',
+  Viridipiou:'#388050',Doughnut:'#a06020'
+};
+const MAX_SIZE = 40;
+let gridSize = 8;
+let cells = [];
+let selectedPlant = PLANTS[0];
+let cellSize = 20;
+
+// Build plant buttons
+const pg = document.getElementById('plantGrid');
+PLANTS.forEach(p => {
+  const btn = document.createElement('button');
+  btn.className = 'plant-btn' + (p === selectedPlant ? ' plant-btn--active' : '');
+  btn.textContent = p;
+  btn.onclick = () => {
+    selectedPlant = p;
+    pg.querySelectorAll('.plant-btn').forEach(b => b.classList.remove('plant-btn--active'));
+    btn.classList.add('plant-btn--active');
+  };
+  pg.appendChild(btn);
+});
+
+function changeSize(delta) {
+  const next = Math.max(1, Math.min(MAX_SIZE, gridSize + delta));
+  if (next === gridSize) return;
+  const old = cells;
+  gridSize = next;
+  document.getElementById('sizeVal').textContent = next;
+  cells = Array.from({ length: next }, (_, y) =>
+    Array.from({ length: next }, (_, x) => old[y]?.[x] || { unlocked: false, plant: null })
+  );
+  resizeCanvas(); draw(); updateStats();
+}
+
+function initGrid(existing) {
+  cells = Array.from({ length: gridSize }, (_, y) =>
+    Array.from({ length: gridSize }, (_, x) => existing?.[y]?.[x] || { unlocked: false, plant: null })
+  );
+  resizeCanvas(); draw(); updateStats();
+}
+
+function resizeCanvas() {
+  const c = document.getElementById('gardenCanvas');
+  c.width  = gridSize * cellSize;
+  c.height = gridSize * cellSize;
+}
+
+function zoom(delta) {
+  const steps = [8, 12, 16, 20, 24, 28, 34, 40];
+  let i = steps.indexOf(cellSize);
+  if (i < 0) i = 3;
+  cellSize = steps[Math.max(0, Math.min(steps.length - 1, i + delta))];
+  document.getElementById('zoomLabel').textContent = cellSize + 'px';
+  resizeCanvas(); draw();
+}
+
+function draw() {
+  const canvas = document.getElementById('gardenCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      const c  = cells[y][x];
+      const px = x * cellSize;
+      const py = y * cellSize;
+      const sz = cellSize - 1;
+
+      // Fill
+      if (c.plant)        ctx.fillStyle = COLORS[c.plant] || '#3a6030';
+      else if (c.unlocked) ctx.fillStyle = '#1e1e14';
+      else                 ctx.fillStyle = '#141410';
+      ctx.fillRect(px, py, sz, sz);
+
+      // Border
+      ctx.strokeStyle = c.plant ? 'rgba(255,255,255,0.15)'
+                      : c.unlocked ? 'rgba(184,164,110,0.2)'
+                      : 'rgba(255,255,255,0.05)';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(px + 0.5, py + 0.5, sz - 1, sz - 1);
+
+      // Label
+      if (cellSize >= 16) {
+        if (c.plant) {
+          ctx.fillStyle = 'rgba(255,255,255,0.75)';
+          ctx.font = `500 ${Math.round(cellSize * 0.36)}px 'IBM Plex Mono', monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(c.plant.slice(0, 3), px + sz / 2, py + sz / 2);
+        } else if (c.unlocked) {
+          ctx.fillStyle = 'rgba(184,164,110,0.3)';
+          ctx.font = `${Math.round(cellSize * 0.4)}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('·', px + sz / 2, py + sz / 2);
+        }
+      }
+    }
+  }
+}
+
+document.getElementById('gardenCanvas').addEventListener('click', function(e) {
+  const wrap = document.getElementById('canvasWrap');
+  const rect  = this.getBoundingClientRect();
+  const cx = Math.floor((e.clientX - rect.left  + wrap.scrollLeft) / cellSize);
+  const cy = Math.floor((e.clientY - rect.top   + wrap.scrollTop)  / cellSize);
+  if (cx < 0 || cy < 0 || cx >= gridSize || cy >= gridSize) return;
+  const c = cells[cy][cx];
+  if (!c.unlocked)   c.unlocked = true;
+  else if (!c.plant) c.plant = selectedPlant;
+  else               c.plant = null;
+  draw(); updateStats();
+});
+
+function updateStats() {
+  let unlocked = 0, planted = 0;
+  cells.flat().forEach(c => { if (c.unlocked) unlocked++; if (c.plant) planted++; });
+  document.getElementById('statUnlocked').textContent = unlocked;
+  document.getElementById('statPlants').textContent   = planted;
+  document.getElementById('statSize').textContent     = gridSize + '×' + gridSize;
+}
+
+function clearGrid() { initGrid(); toast('Grille effacée', 'ok'); }
+
+async function loadPako() {
+  if (window.pako) return;
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
+async function loadSave() {
+  await loadPako();
+  const input = Object.assign(document.createElement('input'), { type: 'file' });
+  input.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const bytes = Uint8Array.from(atob(ev.target.result.trim()), c => c.charCodeAt(0));
+        applySave(JSON.parse(pako.inflate(bytes, { to: 'string' })));
+        toast('Sauvegarde chargée', 'ok');
+      } catch(e) { toast('Erreur : ' + e.message, 'err'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function applySave(data) {
+  let mx = 0, my = 0;
+  (data.unlocked || []).forEach(u => { mx = Math.max(mx, u.x); my = Math.max(my, u.y); });
+  (data.plants   || []).forEach(p => { mx = Math.max(mx, p.x); my = Math.max(my, p.y); });
+  gridSize = Math.min(MAX_SIZE, Math.max(8, mx + 1, my + 1));
+  document.getElementById('sizeVal').textContent = gridSize;
+  if (data.money != null) document.getElementById('money').value = data.money;
+
+  cells = Array.from({ length: gridSize }, () =>
+    Array.from({ length: gridSize }, () => ({ unlocked: false, plant: null }))
+  );
+  (data.unlocked || []).forEach(u => { if (u.y < gridSize && u.x < gridSize) cells[u.y][u.x].unlocked = true; });
+  (data.plants   || []).forEach(p => { if (p.y < gridSize && p.x < gridSize) { cells[p.y][p.x].unlocked = true; cells[p.y][p.x].plant = p.type; } });
+  resizeCanvas(); draw(); updateStats();
+}
+
+async function generateSave() {
+  await loadPako();
+  const garden = {
+    money: parseInt(document.getElementById('money').value) || 0,
+    unlocked: [], plants: [],
+    unlockedPlants: PLANTS.length
+  };
+  cells.forEach((row, y) => row.forEach((c, x) => {
+    if (c.unlocked) garden.unlocked.push({ x, y });
+    if (c.plant)    garden.plants.push({ x, y, type: c.plant, currentStep: 0, ticks: 0, harvestable: false });
+  }));
+  const encoded = btoa(String.fromCharCode(...pako.deflate(JSON.stringify(garden))));
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([encoded], { type: 'text/plain' })),
+    download: 'garden.save'
+  });
+  a.click();
+  toast('Sauvegarde téléchargée', 'ok');
+}
+
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast toast--show' + (type ? ' toast--' + type : '');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('toast--show'), 3000);
+}
+
+initGrid();
+</script>
+</body>
+</html>
