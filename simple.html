@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Décodeur Simple — Harvest Grid</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <a class="nav-back" href="index.html">Accueil</a>
+
+  <div class="header">
+    <div class="header__label">outil 02</div>
+    <h1 class="header__title">Décodeur <span>Simple</span></h1>
+    <p class="header__desc">Grille interactive à boutons — cliquez pour débloquer, recliquez pour planter.</p>
+  </div>
+
+  <div class="controls">
+    <div class="field">
+      <label class="field__label">Argent</label>
+      <input type="number" id="money" value="100" min="0" class="input--narrow">
+    </div>
+    <div class="field">
+      <label class="field__label">Plante</label>
+      <select id="plantSelect"></select>
+    </div>
+    <div class="field">
+      <label class="field__label">Taille</label>
+      <div class="stepper">
+        <button class="stepper__btn" onclick="changeSize(-1)">−</button>
+        <span class="stepper__val" id="sizeVal">8</span>
+        <button class="stepper__btn" onclick="changeSize(1)">+</button>
+      </div>
+    </div>
+    <div class="field" style="margin-left:auto">
+      <label class="field__label">&nbsp;</label>
+      <div style="display:flex;gap:6px">
+        <button class="btn" onclick="loadSave()">Charger .save</button>
+        <button class="btn btn--red" onclick="clearGrid()">Effacer</button>
+        <button class="btn btn--primary" onclick="generateSave()">Générer .save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend__item">
+      <div class="legend__dot" style="background:#141410"></div>
+      Verrouillée
+    </div>
+    <div class="legend__item">
+      <div class="legend__dot" style="background:#1e1e14;border-color:rgba(184,164,110,0.3)"></div>
+      Débloquée
+    </div>
+    <div class="legend__item">
+      <div class="legend__dot" style="background:#141e10;border-color:rgba(122,171,106,0.4)"></div>
+      Plantée
+    </div>
+  </div>
+
+  <div class="grid-wrap">
+    <div class="grid" id="grid"></div>
+  </div>
+  <p class="hint">1er clic → débloque &nbsp;·&nbsp; 2e clic → plante &nbsp;·&nbsp; 3e clic → retire</p>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const PLANTS = ["Herba","Igniflos","Longifel","Quadcapsa","Skaltyus","Glacruxiem","Viridipiou","Doughnut"];
+const MAX_SIZE = 20;
+let gridSize = 8;
+let cells = [];
+
+const sel = document.getElementById('plantSelect');
+PLANTS.forEach(p => {
+  sel.appendChild(Object.assign(document.createElement('option'), { value: p, textContent: p }));
+});
+
+function changeSize(delta) {
+  const next = Math.max(1, Math.min(MAX_SIZE, gridSize + delta));
+  if (next === gridSize) return;
+  const old = cells;
+  gridSize = next;
+  document.getElementById('sizeVal').textContent = next;
+  cells = Array.from({ length: next }, (_, y) =>
+    Array.from({ length: next }, (_, x) => old[y]?.[x] || { unlocked: false, plant: null })
+  );
+  renderGrid();
+}
+
+function initGrid(existing) {
+  cells = Array.from({ length: gridSize }, (_, y) =>
+    Array.from({ length: gridSize }, (_, x) => existing?.[y]?.[x] || { unlocked: false, plant: null })
+  );
+  renderGrid();
+}
+
+function renderGrid() {
+  const grid = document.getElementById('grid');
+  grid.style.gridTemplateColumns = `repeat(${gridSize}, 44px)`;
+  grid.innerHTML = '';
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      const c = cells[y][x];
+      const div = document.createElement('div');
+      div.className = 'cell'
+        + (c.plant ? ' cell--planted' : (c.unlocked ? ' cell--unlocked' : ''));
+      div.textContent = c.plant ? c.plant.slice(0, 3) : (c.unlocked ? '·' : '');
+      div.title = `x:${x} y:${y}` + (c.plant ? ' — ' + c.plant : '');
+      div.addEventListener('click', () => cellClick(x, y));
+      grid.appendChild(div);
+    }
+  }
+}
+
+function cellClick(x, y) {
+  const c = cells[y][x];
+  if (!c.unlocked)    c.unlocked = true;
+  else if (!c.plant)  c.plant = sel.value;
+  else                c.plant = null;
+  renderGrid();
+}
+
+function clearGrid() {
+  initGrid();
+  toast('Grille effacée', 'ok');
+}
+
+async function loadPako() {
+  if (window.pako) return;
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
+async function loadSave() {
+  await loadPako();
+  const input = Object.assign(document.createElement('input'), { type: 'file' });
+  input.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const bytes = Uint8Array.from(atob(ev.target.result.trim()), c => c.charCodeAt(0));
+        const data = JSON.parse(pako.inflate(bytes, { to: 'string' }));
+        applySave(data);
+        toast('Sauvegarde chargée', 'ok');
+      } catch(e) { toast('Erreur : ' + e.message, 'err'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function applySave(data) {
+  let mx = 0, my = 0;
+  (data.unlocked || []).forEach(u => { mx = Math.max(mx, u.x); my = Math.max(my, u.y); });
+  (data.plants   || []).forEach(p => { mx = Math.max(mx, p.x); my = Math.max(my, p.y); });
+  gridSize = Math.min(MAX_SIZE, Math.max(8, mx + 1, my + 1));
+  document.getElementById('sizeVal').textContent = gridSize;
+  if (data.money != null) document.getElementById('money').value = data.money;
+
+  cells = Array.from({ length: gridSize }, () =>
+    Array.from({ length: gridSize }, () => ({ unlocked: false, plant: null }))
+  );
+  (data.unlocked || []).forEach(u => { if (u.y < gridSize && u.x < gridSize) cells[u.y][u.x].unlocked = true; });
+  (data.plants   || []).forEach(p => { if (p.y < gridSize && p.x < gridSize) { cells[p.y][p.x].unlocked = true; cells[p.y][p.x].plant = p.type; } });
+  renderGrid();
+}
+
+async function generateSave() {
+  await loadPako();
+  const garden = {
+    money: parseInt(document.getElementById('money').value) || 0,
+    unlocked: [], plants: [],
+    unlockedPlants: PLANTS.length
+  };
+  for (let y = 0; y < gridSize; y++)
+    for (let x = 0; x < gridSize; x++) {
+      const c = cells[y][x];
+      if (c.unlocked) garden.unlocked.push({ x, y });
+      if (c.plant)    garden.plants.push({ x, y, type: c.plant, currentStep: 0, ticks: 0, harvestable: false });
+    }
+  const compressed = pako.deflate(JSON.stringify(garden));
+  const encoded = btoa(String.fromCharCode(...compressed));
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([encoded], { type: 'text/plain' })),
+    download: 'garden.save'
+  });
+  a.click();
+  toast('Sauvegarde téléchargée', 'ok');
+}
+
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast toast--show' + (type ? ' toast--' + type : '');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('toast--show'), 3000);
+}
+
+initGrid();
+</script>
+</body>
+</html>
