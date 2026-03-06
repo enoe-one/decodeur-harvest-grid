@@ -93,7 +93,7 @@ dz.addEventListener('drop', e => {
 function loadFile(file) {
   fileName = file.name;
   const reader = new FileReader();
-  reader.onload = e => {
+  reader.onload = function(e) {
     fileContent = e.target.result;
     const el = document.getElementById('fileName');
     el.textContent = file.name;
@@ -119,15 +119,19 @@ async function convert() {
   try {
     let result, outFile;
     if (mode === 'decode') {
-      const bin = atob(fileContent.trim());
-      const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+      const b64 = fileContent.trim();
+      const binaryStr = atob(b64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
       const json = pako.inflate(bytes, { to: 'string' });
       result = JSON.stringify(JSON.parse(json), null, 2);
       outFile = fileName.replace(/\.save$/, '') + '.json';
     } else {
       JSON.parse(fileContent);
       const compressed = pako.deflate(fileContent);
-      result = btoa(String.fromCharCode(...compressed));
+      let binary = '';
+      for (let i = 0; i < compressed.length; i++) binary += String.fromCharCode(compressed[i]);
+      result = btoa(binary);
       outFile = fileName.replace(/\.(json|txt)$/, '') + '.save';
     }
     showOutput(result, outFile);
@@ -152,11 +156,12 @@ function copyResult() {
 }
 
 function downloadResult() {
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([outputData], { type: 'text/plain' })),
-    download: outputFile
-  });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([outputData], { type: 'text/plain' }));
+  a.download = outputFile;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   toast('Téléchargement lancé', 'ok');
 }
 
