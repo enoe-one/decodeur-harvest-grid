@@ -23,7 +23,7 @@ This repository mainly exists for **educational and personal exploration purpose
 
 ## ⚠️ Disclaimer
 
-This project is based on the original work created by **Paul Maxime**.
+This project is based on the original work created by **Paul Maxime** and **Gerardufoin**.
 
 If the creator of the original project prefers that this repository not exist, **I will remove it immediately upon request**.
 
@@ -50,7 +50,7 @@ Ce dépôt existe principalement dans un **but éducatif et d’exploration pers
 
 ## ⚠️ Avertissement
 
-Ce projet est basé sur le travail original créé par **Paul Maxime**.
+Ce projet est basé sur le travail original créé par **Paul Maxime** et **Gerardufoin**.
 
 Si le créateur du projet original souhaite que ce dépôt soit supprimé, **je le retirerai immédiatement sur simple demande**.
 
