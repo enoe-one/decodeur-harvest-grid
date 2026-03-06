@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Décodeur Rapide — Harvest Grid</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page page--narrow">
+
+  <a class="nav-back" href="index.html">Accueil</a>
+
+  <div class="header">
+    <div class="header__label">outil 01</div>
+    <h1 class="header__title">Décodeur <span>Rapide</span></h1>
+    <p class="header__desc">Convertissez un fichier .save en JSON, ou un JSON en sauvegarde encodée.</p>
+  </div>
+
+  <div class="mode-toggle">
+    <button class="mode-btn mode-btn--active" id="btn-decode" onclick="setMode('decode')">
+      decode — .save → json
+    </button>
+    <button class="mode-btn" id="btn-encode" onclick="setMode('encode')">
+      encode — json → .save
+    </button>
+  </div>
+
+  <div class="drop-zone" id="dropZone">
+    <input type="file" id="fileInput">
+    <div class="drop-zone__icon" id="dropIcon">↓</div>
+    <div class="drop-zone__title" id="dropTitle">Déposez votre fichier .save ici</div>
+    <div class="drop-zone__sub">ou cliquez pour parcourir</div>
+    <div class="drop-zone__file" id="fileName" style="display:none"></div>
+  </div>
+
+  <br>
+
+  <button class="btn btn--primary btn--full" id="btnConvert" onclick="convert()" disabled>
+    <span id="btnLabel">Décoder</span>
+  </button>
+
+  <div class="output" id="outputSection" style="display:none">
+    <hr class="divider">
+    <div class="output__header">
+      <span class="output__label">Résultat</span>
+      <div class="output__actions">
+        <button class="btn" onclick="copyResult()">Copier</button>
+        <button class="btn btn--primary" onclick="downloadResult()" id="btnDownload">Télécharger</button>
+      </div>
+    </div>
+    <textarea id="outputArea" readonly></textarea>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let mode = 'decode';
+let fileContent = null;
+let fileName = '';
+
+function setMode(m) {
+  mode = m;
+  document.getElementById('btn-decode').classList.toggle('mode-btn--active', m === 'decode');
+  document.getElementById('btn-encode').classList.toggle('mode-btn--active', m === 'encode');
+  document.getElementById('dropTitle').textContent =
+    m === 'decode' ? 'Déposez votre fichier .save ici' : 'Déposez votre fichier .json ou .txt ici';
+  document.getElementById('btnLabel').textContent = m === 'decode' ? 'Décoder' : 'Encoder';
+  document.getElementById('outputSection').style.display = 'none';
+  fileContent = null;
+  document.getElementById('fileName').style.display = 'none';
+  document.getElementById('btnConvert').disabled = true;
+}
+
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (file) loadFile(file);
+});
+
+const dz = document.getElementById('dropZone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drop-zone--active'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drop-zone--active'));
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('drop-zone--active');
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+
+function loadFile(file) {
+  fileName = file.name;
+  const reader = new FileReader();
+  reader.onload = e => {
+    fileContent = e.target.result;
+    const el = document.getElementById('fileName');
+    el.textContent = file.name;
+    el.style.display = 'inline-block';
+    document.getElementById('btnConvert').disabled = false;
+  };
+  reader.readAsText(file);
+}
+
+async function loadPako() {
+  if (window.pako) return;
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
+async function convert() {
+  if (!fileContent) return;
+  await loadPako();
+  try {
+    let result, outFile;
+    if (mode === 'decode') {
+      const bin = atob(fileContent.trim());
+      const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+      const json = pako.inflate(bytes, { to: 'string' });
+      result = JSON.stringify(JSON.parse(json), null, 2);
+      outFile = fileName.replace(/\.save$/, '') + '.json';
+    } else {
+      JSON.parse(fileContent);
+      const compressed = pako.deflate(fileContent);
+      result = btoa(String.fromCharCode(...compressed));
+      outFile = fileName.replace(/\.(json|txt)$/, '') + '.save';
+    }
+    showOutput(result, outFile);
+    toast('Conversion réussie', 'ok');
+  } catch(e) {
+    toast('Erreur : ' + e.message, 'err');
+  }
+}
+
+let outputData = '', outputFile = '';
+function showOutput(data, filename) {
+  outputData = data;
+  outputFile = filename;
+  document.getElementById('outputArea').value = data;
+  document.getElementById('outputSection').style.display = 'block';
+  document.getElementById('btnDownload').textContent = filename;
+}
+
+function copyResult() {
+  navigator.clipboard.writeText(outputData);
+  toast('Copié', 'ok');
+}
+
+function downloadResult() {
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([outputData], { type: 'text/plain' })),
+    download: outputFile
+  });
+  a.click();
+  toast('Téléchargement lancé', 'ok');
+}
+
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast toast--show' + (type ? ' toast--' + type : '');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('toast--show'), 3000);
+}
+</script>
+</body>
+</html>
